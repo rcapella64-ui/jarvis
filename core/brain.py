@@ -1,14 +1,13 @@
 """
-Economy brain — an OpenAI-compatible chat model writes the replies, a free
-voice reads them, and Gemini is not involved at all.
-
-The expensive part of Gemini Live is audio: every second in and every second
-out is billed. This mode replaces the whole session with three cheap pieces:
+The assistant's brain — an OpenAI-compatible chat model writes the replies and
+the assistant's own voice reads them. It is the only mode: Gemini Live was
+retired because its audio only comes in Google's voices.
 
     microphone → Whisper on Groq (core.groq_stt, free)
-              → a chat model over /chat/completions (DeepSeek, Groq's free
-                Llama, OpenRouter, or anything OpenAI-compatible)
-              → Microsoft Edge TTS (free, no key) → the speakers
+              → a chat model over /chat/completions (Gemini by default,
+                or DeepSeek, Groq, OpenRouter, anything OpenAI-compatible)
+              → the cloned voice of voz_local/referencia.wav, synthesised on
+                this PC (voz_local/servidor_voz.py) → the speakers
 
 Everything else the assistant does stays: the persona prompt, memory, every
 action and plugin (they are offered to the model as OpenAI tools), reminders,
@@ -23,7 +22,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
+import subprocess
+import sys
+import time
+from pathlib import Path
 from typing import Callable
 
 import requests
@@ -37,27 +41,28 @@ PRESETS = {
                    "model": "deepseek-chat",
                    "key_url": "https://platform.deepseek.com/api_keys"},
     "groq":       {"base_url": "https://api.groq.com/openai/v1",
-                   "model": "llama-3.3-70b-versatile",
+                   "model": "openai/gpt-oss-120b",
                    "key_url": "https://console.groq.com/keys"},
     "openrouter": {"base_url": "https://openrouter.ai/api/v1",
                    "model": "deepseek/deepseek-chat",
                    "key_url": "https://openrouter.ai/keys"},
     "gemini":     {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
-                   "model": "gemini-2.5-flash",
+                   "model": "gemini-3.6-flash",
                    "key_url": "https://aistudio.google.com/app/apikey"},
     "custom":     {"base_url": "http://localhost:11434/v1", "model": "llama3.2", "key_url": ""},
 }
 PROVIDERS = tuple(PRESETS)
-DEFAULT_VOICE = "pt-BR-AntonioNeural"
-EDGE_VOICES = ("pt-BR-AntonioNeural", "pt-BR-FranciscaNeural", "pt-BR-ThalitaNeural",
-               "pt-PT-DuarteNeural", "en-GB-RyanNeural", "en-US-GuyNeural")
+DEFAULT_PROVIDER = "gemini"
 
-# Which service reads the replies aloud. "edge" is free (Microsoft); "fish" is
-# Fish Audio (fish.audio), paid per character, any voice from its library or a
-# clone of your own — this is how the assistant gets a specific voice.
-TTS_ENGINES = ("edge", "fish")
-FISH_BASE = "https://api.fish.audio"
-FISH_MODELS = ("s2-pro", "s1")
+# The assistant has exactly one voice: the clone of voz_local/referencia.wav,
+# synthesised on this PC (Chatterbox Multilingual, served by
+# voz_local/servidor_voz.py — GPU when there is one, CPU otherwise). No
+# account, no credits, nothing leaves the machine, and nothing to choose.
+_ROOT = Path(__file__).resolve().parent.parent
+LOCAL_TTS_URL = os.environ.get("JARVIS_LOCAL_TTS_URL", "http://127.0.0.1:5005")
+LOCAL_TTS_PY = (_ROOT / "voz_local" / ".venv" / "Scripts" / "python.exe" if sys.platform == "win32"
+                else _ROOT / "voz_local" / ".venv" / "bin" / "python")
+LOCAL_TTS_SERVER = _ROOT / "voz_local" / "servidor_voz.py"
 
 # Tools that only make sense when the model can receive an image.
 _VISION_TOOLS = {"screen_process", "close_camera"}
@@ -65,41 +70,26 @@ _VISION_TOOLS = {"screen_process", "close_camera"}
 
 def settings(get_plugin_config: Callable[[str], dict]) -> dict:
     cfg = get_plugin_config(NAMESPACE)
-    provider = str(cfg.get("provider") or "deepseek").strip().lower()
-    preset = PRESETS.get(provider, PRESETS["deepseek"])
+    provider = str(cfg.get("provider") or DEFAULT_PROVIDER).strip().lower()
+    if provider not in PRESETS:
+        provider = DEFAULT_PROVIDER
+    preset = PRESETS[provider]
     base = str(cfg.get("base_url") or "").strip().rstrip("/") or preset["base_url"]
     model = str(cfg.get("model") or "").strip() or preset["model"]
-    voice = str(cfg.get("tts_voice") or DEFAULT_VOICE).strip() or DEFAULT_VOICE
-    engine = str(cfg.get("tts_engine") or "edge").strip().lower()
-    fish_model = str(cfg.get("fish_model") or FISH_MODELS[0]).strip() or FISH_MODELS[0]
-    return {
-        "provider": provider if provider in PRESETS else "deepseek",
-        "base_url": base, "model": model,
-        "api_key": str(cfg.get("api_key") or "").strip(),
-        "tts_voice": voice,
-        "tts_engine": engine if engine in TTS_ENGINES else "edge",
-        "fish_api_key": str(cfg.get("fish_api_key") or "").strip(),
-        "fish_voice_id": fish_voice_id(cfg.get("fish_voice_id")),
-        "fish_model": fish_model if fish_model in FISH_MODELS else FISH_MODELS[0],
-    }
+    key = str(cfg.get("api_key") or "").strip()
+    if not key and provider == "gemini":
+        # Out of the box the brain uses the Gemini key typed on the first-run
+        # screen, so a fresh clone works without opening PLUGIN SETTINGS.
+        try:
+            from memory.config_manager import get_gemini_key
+            key = str(get_gemini_key() or "").strip()
+        except Exception:
+            pass
+    return {"provider": provider, "base_url": base, "model": model, "api_key": key}
 
 
-def fish_voice_id(raw) -> str:
-    """Accept the bare model id or the voice's page URL
-    (https://fish.audio/m/<id>/ ...) and return the id."""
-    txt = str(raw or "").strip()
-    if not txt:
-        return ""
-    m = re.search(r"[0-9a-fA-F]{32}", txt)
-    if m:
-        return m.group(0).lower()
-    return txt.rstrip("/").split("/")[-1].split("?")[0]
-
-
-def voice_label(st: dict) -> str:
-    if st.get("tts_engine") == "fish":
-        return f"Fish Audio {st.get('fish_model')} voice {st.get('fish_voice_id') or '(default)'}"
-    return f"Edge TTS {st.get('tts_voice')}"
+def voice_label(st: dict | None = None) -> str:
+    return "JARVIS (voz_local/referencia.wav)"
 
 
 # ── tools: Gemini declarations → OpenAI tools ────────────────────────────────
@@ -247,175 +237,63 @@ def chat_stream(messages: list, tools: list | None, st: dict,
     return content, calls
 
 
-# ── voice: Microsoft Edge TTS → 24 kHz int16 PCM ─────────────────────────────
+# ── voice: local clone (voz_local/servidor_voz.py) → 24 kHz int16 PCM ────────
 
-def tts_pcm24k(text: str, voice: str) -> bytes:
-    """Synthesise `text` and return mono int16 PCM at 24 kHz, the rate the
-    playback queue already uses. Needs the `edge-tts` and `miniaudio` packages."""
-    import edge_tts
-    import miniaudio
-
-    async def _synth() -> bytes:
-        comm = edge_tts.Communicate(text, voice)
-        buf = bytearray()
-        async for chunk in comm.stream():
-            if chunk["type"] == "audio":
-                buf.extend(chunk["data"])
-        return bytes(buf)
-
-    loop = asyncio.new_event_loop()
+def local_tts_up() -> bool:
     try:
-        mp3 = loop.run_until_complete(_synth())
-    finally:
-        loop.close()
-    if not mp3:
-        return b""
-    dec = miniaudio.decode(mp3, output_format=miniaudio.SampleFormat.SIGNED16,
-                           nchannels=1, sample_rate=24000)
-    return bytes(dec.samples)
+        return requests.get(f"{LOCAL_TTS_URL}/health", timeout=2).ok
+    except Exception:
+        return False
 
 
-# ── voice: Fish Audio → 24 kHz int16 PCM ─────────────────────────────────────
-
-class FishCreditsExhausted(RuntimeError):
-    """Fish Audio refused to synthesise because the account has no credits
-    left. The caller falls back to another voice and switches brains."""
-
-
-def _fish_out_of_credits(r) -> bool:
-    if r.status_code == 402:
+def ensure_local_tts(wait_s: float = 360.0) -> bool:
+    """Start the local voice server if it is not running, then wait until the
+    model is loaded (the first start downloads it, later ones take seconds)."""
+    if local_tts_up():
         return True
-    if r.status_code in (400, 403):
-        t = (r.text or "").lower()
-        return any(w in t for w in ("credit", "balance", "insufficient", "quota"))
+    if not LOCAL_TTS_PY.exists() or not LOCAL_TTS_SERVER.exists():
+        raise RuntimeError("Local voice not installed (voz_local/.venv missing)")
+    flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    subprocess.Popen([str(LOCAL_TTS_PY), str(LOCAL_TTS_SERVER)], cwd=str(_ROOT),
+                     creationflags=flags, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < wait_s:
+        if local_tts_up():
+            return True
+        time.sleep(1)
     return False
 
 
-def tts_fish_pcm24k(text: str, st: dict) -> bytes:
-    """Synthesise `text` with Fish Audio (POST /v1/tts) in the configured voice
-    and return mono int16 PCM at 24 kHz. The audio is requested as WAV and
-    decoded with miniaudio, so the playback path is the same as Edge's.
-
-    The official SDK sends the body as MessagePack; the API also takes JSON.
-    JSON is used here so no extra package is needed."""
+def tts_local_pcm24k(text: str) -> bytes:
     import miniaudio
 
-    key = st.get("fish_api_key") or ""
-    if not key:
-        raise RuntimeError("Fish Audio API key missing (⚙ → PLUGIN SETTINGS → ECONOMY BRAIN)")
-    body = {
-        "text": text,
-        "format": "wav",
-        "sample_rate": 24000,
-        "latency": "balanced",
-        "chunk_length": 200,
-        "normalize": True,
-        # Low sampling temperature: the default (0.7) let a cloned voice
-        # improvise on long spelled-out numbers, sometimes drifting into
-        # another language. Pronunciation is not a place for creativity.
-        "temperature": 0.3,
-        "top_p": 0.6,
-        "repetition_penalty": 1.2,
-    }
-    if st.get("fish_voice_id"):
-        body["reference_id"] = st["fish_voice_id"]
-    headers = {
-        "Authorization": f"Bearer {key}",
-        "Content-Type": "application/json",
-        "model": st.get("fish_model") or FISH_MODELS[0],
-    }
-    r = requests.post(f"{FISH_BASE}/v1/tts", headers=headers, json=body, timeout=TIMEOUT)
-    if r.status_code in (415, 422):
-        # Server insisting on MessagePack (the SDK's encoding): retry that way
-        # when the package is present.
-        try:
-            import ormsgpack
-            headers["Content-Type"] = "application/msgpack"
-            r = requests.post(f"{FISH_BASE}/v1/tts", headers=headers,
-                              data=ormsgpack.packb(body), timeout=TIMEOUT)
-        except ImportError:
-            raise RuntimeError(f"Fish Audio refused the JSON request ({r.status_code}): "
-                               f"{r.text[:120]} — run: py -m pip install ormsgpack")
-    if _fish_out_of_credits(r):
-        raise FishCreditsExhausted(f"Fish Audio: no credits left on the account ({r.status_code})")
-    if r.status_code == 401:
-        raise RuntimeError("Fish Audio rejected the API key (401)")
-    if r.status_code == 404 and st.get("fish_voice_id"):
-        raise RuntimeError(f"Fish Audio: voice {st['fish_voice_id']} not found (404)")
+    if not local_tts_up() and not ensure_local_tts():
+        raise RuntimeError("Local voice server did not start (see voz_local/servidor_voz.log)")
+    r = requests.post(f"{LOCAL_TTS_URL}/tts", json={"text": text}, timeout=TIMEOUT)
     r.raise_for_status()
-    data = r.content
-    if not data:
+    if not r.content:
         return b""
-    dec = miniaudio.decode(data, output_format=miniaudio.SampleFormat.SIGNED16,
+    dec = miniaudio.decode(r.content, output_format=miniaudio.SampleFormat.SIGNED16,
                            nchannels=1, sample_rate=24000)
     return bytes(dec.samples)
 
 
-_FISH_SPLIT = re.compile(r"(?<=[,;:])\s+")
-_FISH_GAP = b"\x00" * int(24000 * 0.22) * 2      # 220 ms of silence between pieces
-
-
-def _fish_pieces(text: str) -> list[str]:
-    """A long sentence with figures goes to Fish in short pieces, split at
-    commas — each piece is a thing the voice can say in one breath, and the
-    model never has to hold "trezentos e oitenta e um mil, novecentos e
-    oitenta e nove reais em 896 vendas, de 170 clientes" in its head at once.
-    Short sentences go whole."""
-    text = (text or "").strip()
-    if len(text) < 70 or not any(ch.isdigit() for ch in text) and " mil" not in text and " reais" not in text:
-        return [text] if text else []
-    pieces, cur = [], ""
-    for part in _FISH_SPLIT.split(text):
-        if cur and len(cur) + len(part) < 60:
-            cur = f"{cur} {part}"
-        else:
-            if cur:
-                pieces.append(cur)
-            cur = part
-    if cur:
-        pieces.append(cur)
-    return pieces
-
-
-def synth_pcm24k(text: str, st: dict) -> bytes:
-    """One sentence → 24 kHz PCM with whichever voice engine is configured."""
-    if st.get("tts_engine") == "fish":
-        pieces = _fish_pieces(text)
-        if len(pieces) <= 1:
-            return tts_fish_pcm24k(text, st)
-        out = bytearray()
-        for i, piece in enumerate(pieces):
-            if i:
-                out.extend(_FISH_GAP)
-            out.extend(tts_fish_pcm24k(piece, st))
-        return bytes(out)
-    return tts_pcm24k(text, st["tts_voice"])
-
-
-def fish_balance(key: str) -> float | None:
-    """Current API credit balance, or None when it cannot be read."""
+def synth_pcm24k(text: str, st: dict | None = None) -> bytes:
+    """One sentence → 24 kHz PCM in the assistant's voice. There is no other
+    voice to fall back to: if the server died, it is started again and the
+    sentence retried once."""
     try:
-        r = requests.get(f"{FISH_BASE}/wallet/self/api-credit",
-                         headers={"Authorization": f"Bearer {key}"}, timeout=15)
-        if r.ok:
-            c = r.json().get("credit")
-            return float(c) if c is not None else None
-    except Exception:
-        pass
-    return None
-
-
-def fish_credits(key: str) -> str:
-    """Best-effort balance line for TEST CONNECTION ("" if unavailable)."""
-    b = fish_balance(key)
-    return f"credits: {b:.2f}" if b is not None else ""
+        return tts_local_pcm24k(text)
+    except requests.exceptions.ConnectionError:
+        print("[Brain] Voice server not answering — restarting it")
+        if not ensure_local_tts():
+            raise RuntimeError("Voice server did not come back (see voz_local/servidor_voz.log)")
+        return tts_local_pcm24k(text)
 
 
 def missing_packages(st: dict | None = None) -> list[str]:
     out = []
     need = [("miniaudio", "miniaudio")]
-    if not st or st.get("tts_engine") != "fish":
-        need.insert(0, ("edge_tts", "edge-tts"))
     for mod, pkg in need:
         try:
             __import__(mod)
@@ -432,18 +310,14 @@ def test_connection(values: dict):
     missing = missing_packages(st)
     if missing:
         notes.append("voice packages missing — run: py -m pip install " + " ".join(missing))
-    if st["tts_engine"] == "fish":
-        if not st["fish_api_key"]:
-            return False, "Voice is Fish Audio but its API key is empty (fish.audio → API keys)."
-        if not missing:
-            try:
-                pcm = tts_fish_pcm24k("Teste de voz.", st)
-                secs = len(pcm) / 48000.0
-                bal = fish_credits(st["fish_api_key"])
-                notes.append(f"Fish Audio voice OK ({secs:.1f} s of audio"
-                             + (f", {bal}" if bal else "") + ")")
-            except Exception as e:
-                return False, f"Fish Audio voice failed: {e}"
+    if not missing:
+        try:
+            t0 = time.monotonic()
+            pcm = synth_pcm24k("Teste de voz.")
+            notes.append(f"Voice OK ({len(pcm) / 48000.0:.1f} s of audio "
+                         f"in {time.monotonic() - t0:.1f} s)")
+        except Exception as e:
+            return False, f"Voice failed: {e}"
     if not st["api_key"] and st["provider"] != "custom":
         return False, "Enter the API key first. " + " ".join(notes)
     headers = {"Authorization": f"Bearer {st['api_key']}"} if st["api_key"] else {}
@@ -452,7 +326,8 @@ def test_connection(values: dict):
         if r.status_code == 401:
             return False, "The provider rejected the key (401)."
         r.raise_for_status()
-        ids = {m.get("id") for m in (r.json().get("data") or [])}
+        # Gemini lists its ids as "models/<name>"; compare the bare names.
+        ids = {str(m.get("id")).removeprefix("models/") for m in (r.json().get("data") or [])}
         if ids and st["model"] not in ids:
             notes.append(f"model '{st['model']}' not in the provider's list — check the name")
     except Exception as e:

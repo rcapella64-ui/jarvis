@@ -1103,21 +1103,17 @@ class JarvisLive:
             self._reconnect_event.clear()
             return
 
-        # Fish Audio voice: if the account is already empty, do not even start —
-        # go straight back to Gemini's own voice.
-        if st["tts_engine"] == "fish":
-            bal = await asyncio.to_thread(_brain.fish_balance, st["fish_api_key"])
-            if bal is not None and bal <= 0:
-                self.ui.write_log("SYS: Fish Audio has no credits left — switching back to "
-                                  "Gemini (its own voice).")
-                self._reconnect_event = asyncio.Event()   # armed BEFORE the switch asks for it
-                self._switch_brain("gemini", "Fish Audio credits exhausted")
-                await self._reconnect_event.wait()
-                self._reconnect_event.clear()
-                return
-            if bal is not None:
-                self.ui.write_log(f"SYS: Fish Audio voice ready — {bal:.2f} credits left.")
-        self._fish_out = False
+        # The voice: start its server now (the model load takes a while) rather
+        # than on the first reply.
+        self.ui.write_log("SYS: Loading the voice…")
+        try:
+            ok = await asyncio.to_thread(_brain.ensure_local_tts)
+        except Exception as e:
+            ok = False
+            self.ui.write_log(f"ERR: Voice — {e}")
+        self.ui.write_log("SYS: Voice ready." if ok else
+                          "ERR: The voice server did not start "
+                          "(see voz_local/servidor_voz.log).")
 
         # The same system prompt and tool list the Live session would get.
         self._build_config()
@@ -1162,26 +1158,14 @@ class JarvisLive:
                     # ("R$ 380.789,00" → "trezentos e oitenta mil, …").
                     try:
                         from core.numwords import speakable as _speakable
-                        voice_text = _speakable(
-                            sentence, style="hybrid" if st.get("tts_engine") == "fish" else "words")
+                        voice_text = _speakable(sentence, style="words")
                     except Exception:
                         voice_text = sentence
                     try:
                         pcm = _brain.synth_pcm24k(voice_text, st)
-                    except _brain.FishCreditsExhausted as e:
-                        # Finish this reply with the free voice, then hand the
-                        # whole job back to Gemini (see the turn's `finally`).
-                        self.ui.write_log(f"SYS: {e} — finishing with Edge, then back "
-                                          "to Gemini's voice.")
-                        st["tts_engine"] = "edge"
-                        self._fish_out = True
-                        try:
-                            pcm = _brain.synth_pcm24k(voice_text, st)
-                        except Exception as e2:
-                            print(f"[Economy] fallback TTS failed: {e2}")
-                            return
                     except Exception as e:
                         print(f"[Economy] TTS failed: {e}")
+                        self.ui.write_log(f"ERR: Voice — {str(e)[:120]}")
                         return
                     if not pcm or self._interrupted:
                         return
@@ -1253,11 +1237,6 @@ class JarvisLive:
                     self._brain_busy = False
                     if not self.ui.muted and self._awake:
                         self.ui.set_state("LISTENING")
-                    if getattr(self, "_fish_out", False):
-                        # Let the fallback audio play out, then rebuild as Gemini.
-                        self._fish_out = False
-                        loop.call_later(queued_s[0] + 1.5, self._switch_brain, "gemini",
-                                        "Fish Audio credits exhausted")
 
         async def _drain_out_queue() -> None:
             # Nothing consumes microphone PCM here (Groq has the mic); keep the
@@ -1337,6 +1316,9 @@ class JarvisLive:
             return
         if not await self._play_track(url, "morning"):
             return
+        secs = _music.morning_seconds()
+        if secs > 0:
+            asyncio.ensure_future(self._cut_morning_music(secs))
         # Wait for the music to actually reach the sync point (stream start-up
         # included), then let the greeting go. Bounded, so a stalled stream
         # cannot hold the briefing hostage.
@@ -1347,6 +1329,26 @@ class JarvisLive:
             if not self.ui.music_is_playing() and time.monotonic() - t0 > 6.0:
                 return
             await asyncio.sleep(0.05)
+
+    async def _cut_morning_music(self, secs: float) -> None:
+        """Fade the morning track out once it has played `secs` seconds
+        ("morning_music_seconds"). Counted on the track's own position, so a
+        slow stream start-up does not eat into it. Leaves any other music
+        (Focus Protocol, a track asked for by voice) alone."""
+        t0 = time.monotonic()
+        while self.ui.music_position_ms() < secs * 1000:
+            if self._music_mode != "morning" or time.monotonic() - t0 > secs + 30:
+                return
+            await asyncio.sleep(0.1)
+        start = _music.volume()
+        for i in range(15, 0, -1):               # 1.5 s fade
+            if self._music_mode != "morning":
+                return
+            self.ui.music_volume(start * i / 15)
+            await asyncio.sleep(0.1)
+        if self._music_mode == "morning":
+            self.ui.music_stop()
+            self._music_mode = ""
 
     def _on_music_error(self, source: str, err: str) -> bool:
         """Qt thread: the player refused the source. A refused STREAM is

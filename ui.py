@@ -1725,53 +1725,11 @@ class CustomizeOverlay(QWidget):
         self._user_input.setStyleSheet(_fs)
         lay.addWidget(self._user_input)
 
-        # ── Assistant voice — Gemini prebuilt voices ─────────────────────────
-        # Names are language-neutral proper nouns, so the row reads the same in
-        # every locale. Selecting one and applying rebuilds the Live session.
-        from memory.config_manager import (ALL_VOICES, AVAILABLE_VOICES,
-                                           DEFAULT_VOICE, EXTRA_VOICES)
-        lay.addSpacing(4)
-        lay.addWidget(_lbl("ASSISTANT VOICE", 8, color=C.TEXT_DIM,
-                            align=Qt.AlignmentFlag.AlignLeft))
-        self._sel_voice   = (voice or DEFAULT_VOICE)
-        if self._sel_voice not in ALL_VOICES:
-            self._sel_voice = DEFAULT_VOICE
+        # ── Assistant voice ──────────────────────────────────────────────────
+        # Not selectable: the assistant has exactly one voice, the clone of
+        # voz_local/referencia.wav. The stored value is passed through as is.
+        self._sel_voice = voice or ""
         self._voice_btns: dict[str, QPushButton] = {}
-        voice_row = QHBoxLayout(); voice_row.setSpacing(4)
-        for _v in AVAILABLE_VOICES:
-            b = QPushButton(_v)
-            b.setCheckable(True)
-            b.setFixedHeight(28)
-            b.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
-            b.setCursor(Qt.CursorShape.PointingHandCursor)
-            b.clicked.connect(lambda _=False, name=_v: self._on_voice_pick(name))
-            self._voice_btns[_v] = b
-            voice_row.addWidget(b)
-        lay.addLayout(voice_row)
-
-        # The rest of the catalogue, in a dropdown so the row stays one line.
-        # Marked experimental: a Live preview model may not serve every name,
-        # and main.py falls back to the default voice if one is refused.
-        more_row = QHBoxLayout(); more_row.setSpacing(6)
-        more_row.addWidget(_lbl("MORE VOICES (experimental)", 7, color=C.TEXT_DIM,
-                                align=Qt.AlignmentFlag.AlignLeft))
-        self._voice_combo = QComboBox()
-        self._voice_combo.setFixedHeight(26)
-        self._voice_combo.setFont(QFont("Courier New", 8))
-        self._voice_combo.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._voice_combo.setStyleSheet(
-            f"QComboBox {{ background: #000d12; color: {C.TEXT}; "
-            f"border: 1px solid {C.BORDER}; border-radius: 3px; padding: 2px 8px; }}"
-            f"QComboBox:hover {{ border-color: {C.BORDER_B}; }}"
-            f"QComboBox QAbstractItemView {{ background: #000d12; color: {C.TEXT}; "
-            f"selection-background-color: {C.PRI_GHO}; border: 1px solid {C.BORDER}; }}")
-        self._voice_combo.addItem("— pick —", "")
-        for _v in EXTRA_VOICES:
-            self._voice_combo.addItem(_v, _v)
-        self._voice_combo.currentIndexChanged.connect(self._on_voice_combo)
-        more_row.addWidget(self._voice_combo, 1)
-        lay.addLayout(more_row)
-        self._refresh_voice_btns()
 
         # ── UI colour — colour wheel ─────────────────────────────────────────
         lay.addSpacing(4)
@@ -5122,13 +5080,18 @@ class MainWindow(QMainWindow):
         self._ptt_btn.clicked.connect(self._toggle_ptt)
         self._refresh_talk_btns()
 
-        self._stt_btn = _row(QPushButton())
+        # LISTEN WITH and BRAIN only switched to and from Gemini Live, which is
+        # gone (one brain, one voice). Built but never shown, so the code that
+        # repaints them keeps working.
+        self._stt_btn = QPushButton(self)
         self._stt_btn.clicked.connect(self._toggle_stt)
         self._refresh_stt_btn()
+        self._stt_btn.hide()
 
-        self._brain_btn = _row(QPushButton())
+        self._brain_btn = QPushButton(self)
         self._brain_btn.clicked.connect(self._toggle_brain)
         self._refresh_brain_btn()
+        self._brain_btn.hide()
 
         self._gate_btn = _row(QPushButton())
         self._gate_btn.clicked.connect(self._toggle_name_gate)

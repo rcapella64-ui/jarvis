@@ -66,6 +66,36 @@ def _check_assets() -> None:
         )
 
 
+def _install_voice() -> None:
+    """The assistant's one voice: voz_local/referencia.wav cloned on this PC by
+    Chatterbox Multilingual. It gets its own Python environment (voz_local/.venv)
+    because it pins torch/transformers versions the app itself does not use.
+    CUDA build of torch when an NVIDIA GPU is present, the default build
+    otherwise (CPU on Windows, MPS on Apple Silicon) — same voice, just slower."""
+    import shutil
+
+    vdir = HERE / "voz_local"
+    vpy = vdir / ".venv" / ("Scripts/python.exe" if OS == "Windows" else "bin/python")
+    try:
+        if not vpy.exists():
+            _run("Creating the voice environment (voz_local/.venv)…",
+                 [sys.executable, "-m", "venv", str(vdir / ".venv")])
+        torch = [str(vpy), "-m", "pip", "install", "torch==2.6.0", "torchaudio==2.6.0"]
+        if OS != "Darwin" and shutil.which("nvidia-smi"):
+            torch += ["--index-url", "https://download.pytorch.org/whl/cu124"]
+            label = "Installing PyTorch for the voice (NVIDIA GPU build, ~2.5 GB)…"
+        else:
+            label = "Installing PyTorch for the voice (no NVIDIA GPU: CPU build)…"
+        _run(label, torch)
+        _run("Installing the voice model (Chatterbox Multilingual)…",
+             [str(vpy), "-m", "pip", "install", "chatterbox-tts"])
+        _run("Downloading the voice model files (one-time, a few GB)…",
+             [str(vpy), str(vdir / "servidor_voz.py"), "--baixar"])
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        print(f"\n⚠️  The voice was not installed ({e}). The assistant cannot speak "
+              "without it — run setup again once the connection is back.")
+
+
 def main() -> None:
     print(f"⚙  MARK LIV setup — detected OS: {OS or 'unknown'}, "
           f"Python {sys.version_info[0]}.{sys.version_info[1]}")
@@ -90,6 +120,7 @@ def main() -> None:
         print(f'    {sys.executable} -m playwright install chromium firefox')
 
     _check_assets()
+    _install_voice()
 
     # ── OS-specific post-install notes ────────────────────────────────────────
     if OS == "Windows":

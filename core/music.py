@@ -6,6 +6,8 @@ Two uses, both configured in config/api_keys.json:
     "morning_music_url": the track that opens the first launch of the day.
         The greeting waits until the music has reached MORNING_SYNC_MS, so the
         voice lands on the music's opening rather than over a silent intro.
+    "morning_music_seconds": how long that track plays before fading out
+        (default 0 = the whole track).
     "focus_music_url":   the track the Focus Protocol builds a playlist from
         (YouTube's own mix for that track, so it keeps going).
     "music_volume":      0..1, the level while JARVIS is quiet (default 0.35);
@@ -43,6 +45,14 @@ def _cfg() -> dict:
 def morning_url() -> str:
     v = _cfg().get("morning_music_url", DEFAULT_URL)
     return str(v or "").strip()          # "" disables the morning music
+
+
+def morning_seconds() -> float:
+    """Seconds the morning track plays before fading out; 0 = whole track."""
+    try:
+        return max(0.0, float(_cfg().get("morning_music_seconds", 0) or 0))
+    except Exception:
+        return 0.0
 
 
 def focus_url() -> str:

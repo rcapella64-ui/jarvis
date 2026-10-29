@@ -203,20 +203,19 @@ def save_blocked_phrases(phrases: list[str]) -> None:
     _save_flag("blocked_phrases", out)
 
 
-BRAIN_ENGINES = ("gemini", "economy")
+BRAIN_ENGINES = ("economy",)
 
 
 def get_brain_engine() -> str:
-    """Who answers: "gemini" is the Live session (audio in, audio out);
-    "economy" is core.brain — Groq hears, a chat model (DeepSeek, Groq Llama,
-    OpenRouter…) writes, Edge TTS speaks, and Gemini is not used at all."""
-    v = str(load_api_keys().get("brain_engine", "gemini")).strip().lower()
-    return v if v in BRAIN_ENGINES else "gemini"
+    """Always "economy" (core.brain): Groq hears, a chat model writes and the
+    project's own cloned voice (voz_local/referencia.wav) speaks. Gemini Live
+    was retired because its audio comes in Google's voices only, and this
+    assistant has exactly one voice."""
+    return "economy"
 
 
 def save_brain_engine(engine: str) -> None:
-    e = str(engine or "").strip().lower()
-    _save_flag("brain_engine", e if e in BRAIN_ENGINES else "gemini")
+    _save_flag("brain_engine", "economy")
 
 
 STT_ENGINES = ("gemini", "groq")
