@@ -57,9 +57,11 @@ _READ_LIST = r"""
     const m = (badge.getAttribute('aria-label').match(/\d+/) || [badge.textContent.trim()])[0];
     const title = row.querySelector('[title]');
     const lines = row.innerText.split('\n').map(s => s.trim()).filter(Boolean);
-    const name = (title && title.getAttribute('title')) || lines[0] || '';
+    const name = ((title && title.getAttribute('title')) || lines[0] || '').trim();
     const time = lines.find(s => /^\d{1,2}:\d{2}$|^ontem$|^yesterday$|\d{2}\/\d{2}/i.test(s)) || '';
-    const preview = lines.filter(s => s !== name && s !== time && s !== m).join(' ');
+    const preview = lines.filter(s => s !== name && s !== time && s !== m &&
+                                      !/^\d+\s+(mensage(m|ns)\s+n[ãa]o\s+lidas?|unread)/i.test(s))
+                         .join(' ');
     out.push({name, unread: m, time, preview});
     if (out.length >= max) break;
   }
