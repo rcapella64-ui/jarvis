@@ -84,7 +84,6 @@ from memory.config_manager     import (
 from core                     import gemini as _gemini
 from core.plugin_loader        import discover_plugins
 from core                      import undo as undo_stack
-from core                      import welcome_promo as _welcome
 from core                      import confirm as confirm_gate
 from core                      import audio_devices
 from core.action_loader        import discover_actions
@@ -2918,7 +2917,7 @@ class JarvisLive:
             p0 = (f"Greet the user in one short sentence, mention it is {time_str}, "
                   f"and say you are at their disposal. No news, no agenda recap — the "
                   f"briefing was already given today. Do not call any tools."
-                  f"{lang_clause0}{name_clause0}{_welcome.consume()}")
+                  f"{lang_clause0}{name_clause0}")
             if self.session:
                 await self.session.send_client_content(
                     turns={"role": "user", "parts": [{"text": p0}]},
@@ -2979,7 +2978,6 @@ class JarvisLive:
             f"Greet the user warmly, mention it is {time_str}, and say you are checking "
             f"whether their YouTube channel posted anything today and the latest AI news.{session_clause} "
             f"Keep it to 2 short sentences max. Do not call any tools.{lang_clause}{name_clause}"
-            f"{_welcome.consume() if greet else ''}"
         )
 
         # Clear the turn-done event so we can wait for Phase 1 to finish

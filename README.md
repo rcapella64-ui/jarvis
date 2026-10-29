@@ -137,15 +137,6 @@ toca **uma única vez** (marca `intro_shown` em `config/api_keys.json`). Para
 tocar em toda abertura, use `"intro_always": true`; para nunca tocar,
 `"intro_shown": true`.
 
-## Recado na primeira abertura
-
-Herdado do fork de João Gabriel: na primeira vez que o JARVIS abre em um PC,
-logo depois da saudação, ele dá um recado e abre o Instagram
-[@joao.tracker](https://www.instagram.com/joao.tracker/) no navegador, **uma
-única vez** por instalação. Para desligar antes da primeira abertura, coloque
-`"welcome_promo_shown": true` em `config/api_keys.json`. O texto fica em
-`core/welcome_promo.py`.
-
 ## Plugins do fork em português
 
 | Plugin | O que faz |
