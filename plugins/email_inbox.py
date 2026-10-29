@@ -12,6 +12,7 @@ e-mail; o modelo resume a partir disso e de mais nada.
 from __future__ import annotations
 
 import email
+import html
 import imaplib
 import re
 from datetime import datetime, timedelta
@@ -71,6 +72,14 @@ def _text_of(msg) -> str:
     return html
 
 
+def _clean(text: str) -> str:
+    """HTML entities decoded, links shortened to [link], whitespace collapsed —
+    the long tracking URLs carry nothing a summary can use."""
+    text = html.unescape(text or "")
+    text = re.sub(r"<?https?://\S+>?", "[link]", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def _settings(values: dict | None = None) -> tuple[str, str, str]:
     if values is None:
         from memory.config_manager import get_plugin_config
@@ -106,9 +115,11 @@ def fetch(hours: int = 24, unread_only: bool = True, limit: int = 10,
                 when = None
             if when and when < cutoff:
                 continue                               # SINCE is per day; trim to the hour
-            body = re.sub(r"\s+", " ", _text_of(msg)).strip()
-            out.append({"from": _decode(msg.get("From")), "subject": _decode(msg.get("Subject")),
+            body = _clean(_text_of(msg))
+            out.append({"from": _decode(msg.get("From")), "subject": _clean(_decode(msg.get("Subject"))),
                         "when": when, "snippet": body[:SNIPPET]})
+        # IMAP ids follow arrival in the mailbox, not the Date header: sort for real.
+        out.sort(key=lambda m: m["when"] or cutoff, reverse=True)
         return out
 
 
