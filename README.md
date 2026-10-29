@@ -1,19 +1,157 @@
-# JARVIS — fork em português do MARK LV
+# JARVIS — voz única, em português
 
-**Por João Gabriel.** Este projeto é um fork do
-[MARK LV, de FatihMakes](https://github.com/FatihMakes/Mark-LV), um assistente
-de voz estilo JARVIS que ouve, vê, fala e controla o computador usando a
-Gemini Live API. O código original continua com crédito e licença do autor
-(CC BY-NC 4.0, uso pessoal e não comercial). O README original está logo abaixo.
+Assistente de voz estilo JARVIS que ouve, pensa e controla o computador, e
+**fala sempre com a mesma voz**: uma voz própria, clonada a partir de um áudio
+de referência e gerada no seu PC, sem serviço de voz pago e sem conta.
 
-## O que foi adicionado neste fork
+## Créditos
 
-Plugins novos (pasta `plugins/`):
+Este projeto é um fork de um fork, e o crédito vai para quem fez cada parte:
+
+- **[MARK LV](https://github.com/FatihMakes/Mark-LV), de FatihMakes**: o
+  assistente original (interface, avatar, ações, plugins, memória). O README
+  original está logo abaixo, em inglês.
+- **[jarvis-opensource](https://github.com/jgm-source/jarvis-opensource), de
+  João Gabriel**: a versão em português, com o cérebro alternativo, a escuta
+  pela Groq, a agenda, o Trello e os demais plugins listados mais abaixo.
+- **Esta versão, de [rcapella64-ui](https://github.com/rcapella64-ui)**: a voz
+  única, local e clonada.
+
+A licença continua a do autor original, **CC BY-NC 4.0**: uso pessoal e não
+comercial, com crédito aos autores.
+
+## O que muda nesta versão
+
+- **Uma voz só.** O JARVIS fala sempre com a voz de
+  `voz_local/referencia.wav`. Não há lista de vozes para escolher: Edge TTS,
+  Fish Audio e as vozes do Gemini foram removidos.
+- **A voz é gerada no seu PC** pelo modelo
+  [Chatterbox Multilingual](https://github.com/resemble-ai/chatterbox)
+  (licença MIT), que clona a voz a partir de alguns segundos de áudio. Usa a
+  placa NVIDIA quando existe; sem ela, a mesma voz roda no processador, só que
+  mais devagar. Se o servidor de voz parar, o JARVIS o reinicia sozinho.
+- **Um modo só.** O modo Gemini Live foi retirado, porque ele só fala com as
+  vozes do Google. O caminho agora é sempre:
+
+  | Etapa | Quem faz | Onde roda |
+  |---|---|---|
+  | Ouvir | Whisper, na Groq | nuvem (grátis) |
+  | Pensar | Gemini (texto), `gemini-3.6-flash` por padrão | nuvem |
+  | Falar | Chatterbox, com a voz de `referencia.wav` | **no seu PC** |
+
+- O `setup.py` instala a voz sozinho (ambiente próprio em `voz_local/.venv`)
+  e já baixa o modelo.
+
+## Requisitos
+
+| O quê | Detalhe |
+|---|---|
+| Sistema | Windows 10/11 (testado). macOS e Linux devem funcionar, mas não foram testados com a voz local |
+| Python | **3.13** (3.11 e 3.12 também servem). O 3.14 ou mais novo não funciona com o modelo de voz |
+| Placa de vídeo | **Recomendada: NVIDIA com 6 GB ou mais.** Sem ela a voz funciona, mas cada frase demora bem mais |
+| Disco | Cerca de 8 GB (programa, PyTorch, modelo de voz e navegadores de automação) |
+| Chave do Gemini | Grátis em [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
+| Chave da Groq | Grátis em [console.groq.com/keys](https://console.groq.com/keys). É ela que ouve você |
+| Microfone e alto-falante | Obrigatórios |
+
+## Instalação (Windows)
+
+No PowerShell, um comando de cada vez:
+
+```bash
+git clone https://github.com/rcapella64-ui/jarvis.git
+cd jarvis
+py -3.13 -m venv .venv
+.\.venv\Scripts\python.exe setup.py
+```
+
+O `setup.py` demora: além das dependências, baixa o PyTorch e o modelo de
+voz (alguns GB). Se você não tiver o Python 3.13, instale com
+`winget install -e --id Python.Python.3.13`.
+
+Para abrir o JARVIS:
+
+```bash
+.\.venv\Scripts\python.exe main.py
+```
+
+Use sempre o Python de `.venv`. O comando `py main.py` usa o Python do sistema,
+que não tem as bibliotecas instaladas. O botão ⚙ → CREATE DESKTOP SHORTCUT cria
+um atalho que já abre do jeito certo.
+
+## Primeira abertura
+
+1. A tela de setup pede a **chave do Gemini**. Ela também é usada para pensar
+   as respostas.
+2. Em ⚙ → PLUGIN SETTINGS → **GROQ**, cole a **chave da Groq**, escolha o modelo
+   `whisper-large-v3-turbo` e o idioma `pt`. Sem isso, o JARVIS não ouve você.
+3. Reabra o JARVIS. Na abertura ele carrega a voz, o que pode levar de 1 a 3
+   minutos na primeira vez, e mostra **"SYS: Voice ready."** no log.
+4. Diga **"Jarvis, que horas são?"**.
+
+Opcional: em ⚙ → PLUGIN SETTINGS → **BRAIN** dá para trocar quem pensa (Gemini,
+DeepSeek, Groq, OpenRouter ou um servidor próprio). A voz não muda.
+
+## A voz
+
+- O arquivo é `voz_local/referencia.wav`: 14 segundos de fala em português.
+- O servidor de voz (`voz_local/servidor_voz.py`) roda só no seu PC, no
+  endereço `127.0.0.1:5005`, e não aceita conexões de fora.
+- O log fica em `voz_local/servidor_voz.log`.
+- Para testar a voz sem abrir o JARVIS:
+  `.\.venv\Scripts\python.exe voz_local\testar_voz.py "Bom dia, senhor."`
+  (gera `voz_local/teste_voz.wav`).
+- O Chatterbox coloca uma marca d'água inaudível em todo áudio que gera. É um
+  recurso do modelo para identificar áudio sintético e não muda o som.
+
+**Quer outra voz no seu fork?** Troque `voz_local/referencia.wav` por 10 a 30
+segundos de fala limpa, sem música nem ruído, e reinicie o JARVIS. Use apenas
+vozes que você tem o direito de usar: a sua própria ou de alguém que
+autorizou.
+
+## Limitações
+
+- **Cada frase leva alguns segundos para ser gerada**: de 3 a 10 s numa RTX 3050
+  de notebook, e mais sem placa NVIDIA. O JARVIS fala frase por frase.
+- **Sem visão.** Ver a tela e a câmera dependiam do Gemini Live, que saiu.
+- **Sem interromper por voz** enquanto ele fala.
+- O plano grátis da Groq limita o tamanho de cada pedido. Por isso o cérebro
+  padrão é o Gemini, e a Groq fica só com a escuta.
+- Quando o Gemini está sobrecarregado, ele responde com o erro 503
+  ("high demand"). Espere um pouco ou troque o modelo em ⚙ → PLUGIN SETTINGS →
+  BRAIN (por exemplo, `gemini-3.5-flash-lite`).
+
+## Música de abertura
+
+Na primeira abertura do dia toca uma música (`morning_music_url` em
+`config/api_keys.json`). `"morning_music_seconds": 10` faz ela parar com fade
+depois de 10 segundos; `0` toca inteira; `"morning_music_url": ""` desliga.
+
+## Intro de abertura
+
+Na primeira abertura em cada PC, antes da saudação, as linhas da malha do
+JARVIS constroem um cartão, um checkout, a palavra RASTRACKING e o Pixel da
+Meta, que absorve os dados e solta dinheiro; no fim as linhas giram e se
+encaixam no rosto do JARVIS (`core/intro.py`). Dura cerca de 18 segundos e
+toca **uma única vez** (marca `intro_shown` em `config/api_keys.json`). Para
+tocar em toda abertura, use `"intro_always": true`; para nunca tocar,
+`"intro_shown": true`.
+
+## Recado na primeira abertura
+
+Herdado do fork de João Gabriel: na primeira vez que o JARVIS abre em um PC,
+logo depois da saudação, ele dá um recado e abre o Instagram
+[@joao.tracker](https://www.instagram.com/joao.tracker/) no navegador, **uma
+única vez** por instalação. Para desligar antes da primeira abertura, coloque
+`"welcome_promo_shown": true` em `config/api_keys.json`. O texto fica em
+`core/welcome_promo.py`.
+
+## Plugins do fork em português
 
 | Plugin | O que faz |
 |---|---|
 | `bom_dia.py` | Briefing matinal por voz |
-| `brain_economy.py` | Cérebro alternativo e barato (outro provedor de LLM + voz Edge TTS / Fish Audio) |
+| `brain_economy.py` | Tela ⚙ → BRAIN: quem pensa as respostas (Gemini, DeepSeek, Groq…) |
 | `cakto_sales.py` | Vendas e pedidos da Cakto por voz |
 | `focus_mode.py` | Modo foco |
 | `gemini_accounts.py` | Rodízio de chaves Gemini (secundária e terciária) |
@@ -25,59 +163,20 @@ Plugins novos (pasta `plugins/`):
 | `rastracking.py` | Consulta de rastreio Rastracking |
 | `trello_control.py` | Quadros, listas e cartões do Trello por voz |
 
-Núcleo novo (pasta `core/`): `brain.py`, `briefing_sources.py`, `groq_stt.py`,
-`holo.py`, `music.py`, `numwords.py`, `usage.py`, `agenda_sync.py` (espelho
-de duas vias entre a agenda local e uma lista do Trello, com tela
-📅 AGENDAMENTOS no painel ⚙ e comando por voz "muda a call para 17h").
-O cérebro econômico tem limite de contexto e recuperação automática, com
-diagnóstico em `memory/brain_debug.txt`. Além disso: personalidade de
-mordomo em `core/prompt.txt`, mais vozes Gemini, filtro por nome e ajustes em
-avatar, TTS, STT, hotkey e dashboard. O script `criar-atalho-jarvis.bat` cria
-um ícone na área de trabalho que abre o JARVIS sem janela de terminal.
+## Privacidade e segurança das chaves
 
-## Instalação rápida (Windows)
-
-```bash
-git clone https://github.com/jgm-source/jarvis-opensource.git
-cd jarvis-opensource
-py setup.py
-py main.py
-```
-
-Na primeira execução a tela de setup pede a chave Gemini. As chaves dos
-plugins ficam em ⚙ → PLUGIN SETTINGS. Um modelo do arquivo de configuração
-está em `config/api_keys.example.json`.
-
-Guia ilustrado passo a passo: [docs/instalacao.html](docs/instalacao.html)
-(abra o arquivo no navegador). Para atualizar quando sair versão nova, sem
-perder chaves nem memória: [docs/atualizar.html](docs/atualizar.html).
-
-## Intro de abertura
-
-Na primeira abertura em cada PC, antes da saudação, as linhas da malha do
-JARVIS constroem um cartão, um checkout, a palavra RASTRACKING e o Pixel da
-Meta, que absorve os dados e solta dinheiro; no fim as linhas giram e se
-encaixam no rosto do JARVIS, que então faz a saudação (`core/intro.py`).
-Dura cerca de 18 segundos e toca **uma única vez** (marca `intro_shown` em
-`config/api_keys.json`). Para tocar em toda abertura, use
-`"intro_always": true`; para nunca tocar, `"intro_shown": true`. Um
-protótipo em HTML da mesma animação está em `docs/intro-preview.html`.
-
-## Recado na primeira abertura
-
-Na primeira vez que o JARVIS abre em um PC, logo depois da saudação, ele dá um
-recado do criador deste fork e abre o Instagram
-[@joao.tracker](https://www.instagram.com/joao.tracker/) no navegador. Isso
-acontece **uma única vez** por instalação. Para desligar antes mesmo da primeira
-abertura, coloque `"welcome_promo_shown": true` em `config/api_keys.json`. O
-texto e o perfil ficam em `core/welcome_promo.py`.
-
-## Segurança das suas chaves
-
-- `config/api_keys.json`, `config/certs/` e `memory/*.json` estão no
-  `.gitignore` e **nunca** vão para o GitHub.
+- **O que sai do seu PC:** o áudio do que você fala vai para a Groq, para ser
+  transcrito, e o texto vai para o Gemini, que escreve a resposta. A voz do
+  JARVIS é gerada no seu PC e não sai dele.
+- As chaves ficam em `config/api_keys.json`, em texto puro. Esse arquivo, assim
+  como `config/certs/` e `memory/*.json`, está no `.gitignore` e **não** vai
+  para o GitHub.
 - Se uma chave vazar em algum commit, revogue na hora e gere outra. Apagar o
   arquivo depois não apaga o histórico.
+
+> O README original, em inglês, vem a seguir. Ele descreve o MARK LV de
+> FatihMakes, que funciona com o Gemini Live. Trechos sobre vozes do Gemini,
+> visão e o envio da sua voz ao Gemini **não valem para esta versão**.
 
 ---
 
