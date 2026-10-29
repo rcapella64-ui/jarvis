@@ -371,6 +371,11 @@ def _msg_len(m: dict) -> int:
     return n
 
 
+# First clause of a sentence: up to the first , ; or : that is followed by a
+# space (so "380.789,00" and "3,5" are never split).
+_FIRST_CLAUSE = re.compile(r"^(.+?[,;:])\s+(.+)$", re.S)
+
+
 def _trim_history(history: list, keep: int = 24) -> None:
     """Keep roughly the last `keep` messages, cutting only at a user turn so a
     tool exchange is never split; cap every message and the total size, so a
@@ -1121,7 +1126,9 @@ class JarvisLive:
             "\n\n[MODE]\nYou are running in economy mode: your words are written by a "
             "text model and read aloud by a separate voice. You have NO vision in this "
             "mode — screen_process and close_camera are not available, so never offer "
-            "to look at the screen or camera. Keep replies short: they are spoken.")
+            "to look at the screen or camera. Answer in one or two short sentences "
+            "(about 25 words) unless the user explicitly asks for detail: every sentence "
+            "takes seconds to voice on this machine. Put the answer itself first.")
         history: list[dict] = []
         self._brain_q = asyncio.Queue()
         self.session = _EconomySession(self)
@@ -1149,31 +1156,50 @@ class JarvisLive:
                 spoken: list[str] = []
                 queued_s = [0.0]                        # seconds of audio queued this turn
 
-                def _say(sentence: str) -> None:
-                    """One finished sentence: synthesise and queue it (worker thread)."""
-                    if self._interrupted:
-                        return
+                def _voice(piece: str) -> bool:
+                    """Synthesise one piece of text and queue its audio."""
                     # Screen keeps the digits; the voice gets the words
                     # ("R$ 380.789,00" → "trezentos e oitenta mil, …").
                     try:
                         from core.numwords import speakable as _speakable
-                        voice_text = _speakable(sentence, style="words")
+                        voice_text = _speakable(piece, style="words")
                     except Exception:
-                        voice_text = sentence
+                        voice_text = piece
                     try:
                         pcm = _brain.synth_pcm24k(voice_text, st)
                     except Exception as e:
                         print(f"[Economy] TTS failed: {e}")
                         self.ui.write_log(f"ERR: Voice — {str(e)[:120]}")
-                        return
+                        return False
                     if not pcm or self._interrupted:
-                        return
+                        return False
                     _usage.note("brain", tts_s=len(pcm) / 48000.0)
                     queued_s[0] += len(pcm) / 48000.0
-                    spoken.append(sentence)
-                    self.ui.holo_transcript(sentence)
                     for i in range(0, len(pcm), 2400):
                         loop.call_soon_threadsafe(self.audio_in_queue.put_nowait, pcm[i:i + 2400])
+                    return True
+
+                def _say(sentence: str) -> None:
+                    """One finished sentence: synthesise and queue it (worker thread)."""
+                    if self._interrupted:
+                        return
+                    # The voice is several times slower than real time, so the
+                    # first sentence of a reply is voiced in two parts, split at
+                    # its first comma: the opening clause starts playing while
+                    # the rest is still being synthesised.
+                    pieces = [sentence]
+                    if not spoken and queued_s[0] == 0.0 and len(sentence) > 40:
+                        m = _FIRST_CLAUSE.match(sentence)
+                        if m and len(m.group(1)) >= 12 and len(m.group(2)) >= 12:
+                            pieces = [m.group(1), m.group(2)]
+                    voiced = False
+                    for piece in pieces:
+                        if self._interrupted:
+                            break
+                        voiced = _voice(piece) or voiced
+                    if voiced:
+                        spoken.append(sentence)
+                        self.ui.holo_transcript(sentence)
 
                 try:
                     for _round in range(5):
