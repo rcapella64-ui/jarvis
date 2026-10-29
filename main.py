@@ -1128,7 +1128,15 @@ class JarvisLive:
             "mode — screen_process and close_camera are not available, so never offer "
             "to look at the screen or camera. Answer in one or two short sentences "
             "(about 25 words) unless the user explicitly asks for detail: every sentence "
-            "takes seconds to voice on this machine. Put the answer itself first.")
+            "takes seconds to voice on this machine. Put the answer itself first."
+            "\n\n[FACTS]\nNever invent information. Messages, e-mails, Instagram activity, "
+            "news, numbers, names and dates come ONLY from what a tool returned in this "
+            "conversation: call the tool first, then report exactly what it returned, "
+            "saying who sent it and when when that is given. If a tool failed, returned "
+            "nothing or is not configured, say so plainly (\"I could not read your e-mail\", "
+            "\"there are no new messages\") instead of filling the gap. When summarising, "
+            "leave things out rather than adding anything that was not there. If you do not "
+            "know, say you do not know.")
         history: list[dict] = []
         self._brain_q = asyncio.Queue()
         self.session = _EconomySession(self)
