@@ -234,24 +234,24 @@ def save_stt_engine(engine: str) -> None:
     _save_flag("stt_engine", e if e in STT_ENGINES else "gemini")
 
 
-HUD_STYLES = ("face", "core")
+HUD_STYLES = ("waveform", "face", "core")
 
 
 def get_hud_style() -> str:
-    """Which centrepiece the HUD draws: the animated head, or the reactor core.
+    """Which centrepiece the HUD draws: the Three.js waveform, the animated head
+    or the reactor core.
 
-    Taste, not capability — both render in the same software painter and cost
-    about the same. Defaults to the head because that is what MARK LIV shipped
-    with; anyone who preferred the older look can switch back in ⚙ and the
-    choice survives a restart.
+    Defaults to the waveform. The head and the core render in the software
+    painter; the waveform needs QtWebEngine and WebGL and falls back to the core
+    without them. Switched in ⚙, and the choice survives a restart.
     """
-    v = str(load_api_keys().get("hud_style", "face")).strip().lower()
-    return v if v in HUD_STYLES else "face"
+    v = str(load_api_keys().get("hud_style", "waveform")).strip().lower()
+    return v if v in HUD_STYLES else "waveform"
 
 
 def save_hud_style(style: str) -> None:
     s = str(style or "").strip().lower()
-    _save_flag("hud_style", s if s in HUD_STYLES else "face")
+    _save_flag("hud_style", s if s in HUD_STYLES else "waveform")
 
 
 # ── Live-session tuning ──────────────────────────────────────────────────────

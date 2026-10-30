@@ -121,6 +121,18 @@ autorizou.
   ("high demand"). Espere um pouco ou troque o modelo em ⚙ → PLUGIN SETTINGS →
   BRAIN (por exemplo, `gemini-3.5-flash-lite`).
 
+## Visual: Waveform 3D
+
+O centro da tela é uma onda 3D feita em [Three.js](https://threejs.org) (`core/waveform3d/`),
+movida pelo áudio real: a sua voz quando ele ouve, a dele quando fala. Ela muda de cor
+com o estado (ouvindo, falando, pensando, mudo). Roda na placa de vídeo, dentro de um
+QtWebEngine (`core/waveform_view.py`). O botão ⚙ → **HUD** alterna entre a onda, o rosto
+animado e o reator. Sem WebGL ou sem o QtWebEngine, o JARVIS usa o reator sozinho.
+
+Para mexer no visual sem abrir o JARVIS, abra
+`core/waveform3d/index.html?demo=1` num servidor local ou no Chromium: ele simula a voz e
+passa pelos estados.
+
 ## Música de abertura
 
 Na primeira abertura do dia toca uma música (`morning_music_url` em
@@ -533,6 +545,7 @@ Mark LV/
 
 | Asset | Source | Licence |
 | --- | --- | --- |
+| `core/waveform3d/three.min.js` | [Three.js](https://github.com/mrdoob/three.js) r159 | MIT License |
 | `core/face_model.obj` | [MediaPipe](https://github.com/google-ai-edge/mediapipe) canonical face model — 468 vertices of measured human face geometry | Apache License 2.0 |
 
 ---

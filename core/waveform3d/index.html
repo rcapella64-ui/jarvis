@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>waveform-loading</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #000308; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<!-- The HUD's centrepiece. Driven from Python (core/waveform_view.py) through
+     window.jarvis; open with ?demo=1 to run it alone in a browser. The title is
+     the signal back to Python: waveform-ok, or waveform-fail -> painted fallback. -->
+<script src="three.min.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  const COLS = 240, ROWS = 56;            // the surface's grid
+  const SPAN_X = 3.4, SPAN_Z = 1.5;       // half-width and half-depth in world units
+  const HISTORY = 128;                    // samples of level, travelling outward
+
+  // ---- palette; jarvis.theme() replaces it with the HUD's live colours ----
+  const palette = {
+    bg: "#000308", pri: "#00d4ff", acc: "#ff6b35", acc2: "#ffcc00",
+    green: "#00ff88", muted: "#5a6a75",
+  };
+
+  // ---- state written by Python, eased every frame ----
+  const input = { amp: 0, state: "LISTENING", speaking: false, muted: false };
+  let amp = 0, energy = 0.25, swirl = 0, flat = 0;
+
+  let renderer;
+  try {
+    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: "high-performance" });
+  } catch (e) {
+    document.title = "waveform-fail";
+    return;
+  }
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  document.body.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 50);
+
+  // Level history as a 1-D texture: index 0 is "now", higher is older. Sampling
+  // it by distance from the centre makes each sound travel outward as a ripple.
+  const historyData = new Uint8Array(HISTORY);
+  const historyTex = new THREE.DataTexture(historyData, HISTORY, 1, THREE.RedFormat, THREE.UnsignedByteType);
+  historyTex.magFilter = historyTex.minFilter = THREE.LinearFilter;
+  historyTex.wrapS = historyTex.wrapT = THREE.ClampToEdgeWrapping;
+  historyTex.needsUpdate = true;
+
+  const uniforms = {
+    uTime: { value: 0 }, uHistory: { value: historyTex },
+    uEnergy: { value: 0.25 }, uFlat: { value: 0 }, uSwirl: { value: 0 },
+    uColorA: { value: new THREE.Color(palette.pri) },
+    uColorB: { value: new THREE.Color(palette.pri) },
+    uBg: { value: new THREE.Color(palette.bg) },
+    uPixel: { value: 1 },
+  };
+
+  const VERT_COMMON = `
+    uniform float uTime, uEnergy, uFlat, uSwirl;
+    uniform sampler2D uHistory;
+    varying float vHeight, vEdge, vDepth;
+
+    float surface(vec2 p) {
+      float d = length(p * vec2(1.0, 1.7));
+      float level = texture2D(uHistory, vec2(clamp(d / 3.6, 0.0, 1.0), 0.5)).r;
+      float envelope = smoothstep(3.5, 0.25, abs(p.x)) * smoothstep(1.55, 0.2, abs(p.y));
+      float t = uTime;
+      float idle = sin(p.x * 1.7 + t * 0.7) * 0.55 + sin(p.x * 3.1 - t * 0.9 + p.y * 2.0) * 0.28;
+      float voice = sin(p.x * 7.0 - t * 6.0) * 0.55 + sin(p.x * 13.0 + t * 8.5 + p.y * 3.0) * 0.32
+                  + sin(d * 11.0 - t * 9.0) * 0.45;
+      float h = idle * (0.16 + 0.14 * uEnergy) + voice * level * 1.8;
+      // Thinking: a slow sweep crossing the surface.
+      float sweep = sin(p.x * 1.4 - t * 2.4 + p.y * 2.0);
+      h += uSwirl * 0.30 * smoothstep(0.55, 1.0, sweep);
+      return h * envelope * (1.0 - uFlat);
+    }
+
+    vec3 displaced(vec3 p) {
+      float h = surface(p.xz);
+      vHeight = h;
+      vEdge = smoothstep(3.4, 2.2, abs(p.x)) * smoothstep(1.5, 0.75, abs(p.z));
+      vDepth = (p.z + 1.5) / 3.0;
+      return vec3(p.x, h, p.z);
+    }
+  `;
+
+  const FRAG_COMMON = `
+    uniform vec3 uColorA, uColorB, uBg;
+    varying float vHeight, vEdge, vDepth;
+    vec3 shade() {
+      float lift = smoothstep(0.0, 0.7, abs(vHeight));
+      return mix(uColorA, uColorB, lift);
+    }
+  `;
+
+  // Glowing points over the whole surface.
+  function gridPositions() {
+    const pos = new Float32Array(COLS * ROWS * 3);
+    let k = 0;
+    for (let r = 0; r < ROWS; r++) {
+      const z = (r / (ROWS - 1) * 2 - 1) * SPAN_Z;
+      for (let c = 0; c < COLS; c++) {
+        pos[k++] = (c / (COLS - 1) * 2 - 1) * SPAN_X;
+        pos[k++] = 0;
+        pos[k++] = z;
+      }
+    }
+    return pos;
+  }
+
+  const positions = new THREE.BufferAttribute(gridPositions(), 3);
+  const pointGeo = new THREE.BufferGeometry();
+  pointGeo.setAttribute("position", positions);
+  const points = new THREE.Points(pointGeo, new THREE.ShaderMaterial({
+    uniforms, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    vertexShader: VERT_COMMON + `
+      uniform float uPixel;
+      void main() {
+        vec4 mv = modelViewMatrix * vec4(displaced(position), 1.0);
+        gl_PointSize = uPixel * (2.2 + 6.0 * smoothstep(0.0, 0.8, abs(vHeight))) * (5.5 / -mv.z);
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: FRAG_COMMON + `
+      void main() {
+        float d = length(gl_PointCoord - 0.5) * 2.0;
+        float glow = pow(max(0.0, 1.0 - d), 2.0);
+        float a = glow * vEdge * (0.30 + 0.70 * smoothstep(0.02, 0.6, abs(vHeight)));
+        gl_FragColor = vec4(shade(), a);       // additive blending applies the alpha
+      }`,
+  }));
+  scene.add(points);
+
+  // Thin ribbons along every few rows: they are what reads as a waveform.
+  function ribbonIndices(step) {
+    const idx = [];
+    for (let r = 0; r < ROWS; r += step) {
+      for (let c = 0; c < COLS - 1; c++) {
+        idx.push(r * COLS + c, r * COLS + c + 1);
+      }
+    }
+    return idx;
+  }
+  const lineGeo = new THREE.BufferGeometry();
+  lineGeo.setAttribute("position", positions);
+  lineGeo.setIndex(ribbonIndices(5));
+  const lines = new THREE.LineSegments(lineGeo, new THREE.ShaderMaterial({
+    uniforms, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    vertexShader: VERT_COMMON + `
+      void main() { gl_Position = projectionMatrix * modelViewMatrix * vec4(displaced(position), 1.0); }`,
+    fragmentShader: FRAG_COMMON + `
+      void main() {
+        float centre = 1.0 - abs(vDepth - 0.5) * 2.0;
+        float a = vEdge * (0.22 + 0.33 * centre + 0.60 * smoothstep(0.0, 0.5, abs(vHeight)));
+        gl_FragColor = vec4(shade(), a);
+      }`,
+  }));
+  scene.add(lines);
+
+  // Soft light under the surface, breathing with the level.
+  function glowTexture() {
+    const size = 256, cv = document.createElement("canvas");
+    cv.width = cv.height = size;
+    const g = cv.getContext("2d");
+    const grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    grad.addColorStop(0, "rgba(255,255,255,1)");
+    grad.addColorStop(0.25, "rgba(255,255,255,.35)");
+    grad.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = grad;
+    g.fillRect(0, 0, size, size);
+    return new THREE.CanvasTexture(cv);
+  }
+  const glow = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: glowTexture(), blending: THREE.AdditiveBlending, transparent: true, depthWrite: false,
+  }));
+  glow.position.set(0, -0.15, 0);
+  scene.add(glow);
+
+  // Dust drifting behind the wave.
+  const DUST = 420;
+  const dustPos = new Float32Array(DUST * 3);
+  for (let i = 0; i < DUST; i++) {
+    dustPos[i * 3] = (Math.random() * 2 - 1) * 6;
+    dustPos[i * 3 + 1] = (Math.random() * 2 - 1) * 3;
+    dustPos[i * 3 + 2] = -1.5 - Math.random() * 5;
+  }
+  const dustGeo = new THREE.BufferGeometry();
+  dustGeo.setAttribute("position", new THREE.BufferAttribute(dustPos, 3));
+  const dustMat = new THREE.PointsMaterial({
+    size: 0.022, transparent: true, opacity: 0.45, depthWrite: false,
+    blending: THREE.AdditiveBlending, color: new THREE.Color(palette.pri),
+  });
+  const dust = new THREE.Points(dustGeo, dustMat);
+  scene.add(dust);
+
+  function resize() {
+    const w = window.innerWidth || 1, h = window.innerHeight || 1;
+    renderer.setSize(w, h);
+    camera.aspect = w / h;
+    // Keep the whole width of the wave in view on narrow windows.
+    const need = SPAN_X * 1.06 / Math.tan(camera.fov * Math.PI / 360) / camera.aspect;
+    const dist = Math.max(3.9, need);
+    camera.userData.dist = dist;
+    camera.updateProjectionMatrix();
+    uniforms.uPixel.value = renderer.getPixelRatio() * Math.min(h / 520, 1.6);
+  }
+  window.addEventListener("resize", resize);
+  resize();
+
+  function stateColours() {
+    if (input.muted) return [palette.muted, palette.muted];
+    if (input.speaking) return [palette.pri, palette.acc];
+    if (input.state === "THINKING" || input.state === "PROCESSING") return [palette.pri, palette.acc2];
+    if (input.state === "LISTENING") return [palette.pri, palette.green];
+    return [palette.pri, palette.pri];
+  }
+
+  const targetA = new THREE.Color(), targetB = new THREE.Color();
+  const clock = new THREE.Clock();
+  let lastHist = 0, time = 0;
+
+  function frame() {
+    requestAnimationFrame(frame);
+    const dt = Math.min(clock.getDelta(), 0.1);
+    time += dt;
+    const ease = (rate) => 1 - Math.exp(-rate * dt);
+
+    if (window.jarvis.demo) window.jarvis.demo(time);
+
+    amp += (input.amp - amp) * ease(18);
+    const asleep = input.state === "SLEEPING" || input.muted;
+    energy += ((asleep ? 0.0 : input.speaking ? 1.0 : 0.45) - energy) * ease(3);
+    const thinking = !asleep && (input.state === "THINKING" || input.state === "PROCESSING");
+    swirl += ((thinking ? 1 : 0) - swirl) * ease(3);
+    flat += ((input.muted ? 0.92 : 0) - flat) * ease(5);
+
+    // Push the level into the history at a fixed rate, whatever the frame rate.
+    lastHist += dt;
+    while (lastHist >= 1 / 90) {
+      lastHist -= 1 / 90;
+      historyData.copyWithin(1, 0, HISTORY - 1);
+      historyData[0] = Math.round(Math.min(1, amp) * 255);
+    }
+    historyTex.needsUpdate = true;
+
+    const [a, b] = stateColours();
+    uniforms.uColorA.value.lerp(targetA.set(a), ease(4));
+    uniforms.uColorB.value.lerp(targetB.set(b), ease(4));
+    dustMat.color.copy(uniforms.uColorA.value);
+
+    uniforms.uTime.value = time;
+    uniforms.uEnergy.value = energy;
+    uniforms.uSwirl.value = swirl;
+    uniforms.uFlat.value = flat;
+
+    const s = 2.4 + amp * 4.5 + swirl * 0.5 * (1 + Math.sin(time * 3));
+    glow.scale.set(s * 2.4, s, 1);
+    glow.material.color.copy(uniforms.uColorB.value);
+    glow.material.opacity = (input.muted ? 0.03 : 0.07) + amp * 0.30;
+
+    dust.rotation.y = Math.sin(time * 0.05) * 0.2;
+    dust.position.y = Math.sin(time * 0.11) * 0.08;
+
+    const d = camera.userData.dist;
+    camera.position.set(Math.sin(time * 0.13) * 0.45, 0.95 + Math.sin(time * 0.09) * 0.1, d);
+    camera.lookAt(0, -0.02, 0);
+
+    renderer.render(scene, camera);
+  }
+
+  // ---- the API Python talks to ----
+  window.jarvis = {
+    update(a, state, speaking, muted) {
+      input.amp = a;
+      input.state = state;
+      input.speaking = speaking;
+      input.muted = muted;
+    },
+    theme(colors) {
+      Object.assign(palette, colors);
+      uniforms.uBg.value.set(palette.bg);
+      renderer.setClearColor(palette.bg, 1);
+      document.body.style.background = palette.bg;
+    },
+    demo: null,
+  };
+
+  // ?demo=1: cycles through the states with a fake voice, for working on the look.
+  if (new URLSearchParams(location.search).has("demo")) {
+    window.jarvis.demo = function (t) {
+      const phase = Math.floor(t / 5) % 4;
+      const syll = Math.pow(Math.abs(Math.sin(t * 5.3) * Math.sin(t * 2.1 + 1)), 0.6);
+      const voice = syll * (0.55 + 0.45 * Math.sin(t * 0.9));
+      if (phase === 0) window.jarvis.update(voice, "SPEAKING", true, false);
+      else if (phase === 1) window.jarvis.update(voice * 0.25, "LISTENING", false, false);
+      else if (phase === 2) window.jarvis.update(0, "THINKING", false, false);
+      else window.jarvis.update(0, "LISTENING", false, true);
+    };
+  }
+
+  renderer.setClearColor(palette.bg, 1);
+  frame();
+  document.title = "waveform-ok";
+})();
+</script>
+</body>
+</html>

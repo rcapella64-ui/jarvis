@@ -10,7 +10,13 @@
 # PyQt6 and numpy also carry the holographic avatar: the head is rendered in
 # software with QPainter and posed with numpy, so the face costs no extra
 # package, no OpenGL and no GPU. Nothing below was added for it.
-PyQt6>=6.6,<7
+# PyQt6-WebEngine runs the Three.js waveform (core/waveform3d); without it the
+# HUD paints its reactor core instead. It must be on the same minor version as
+# PyQt6, and it is released later than PyQt6 is: hold PyQt6 back to the newest
+# version WebEngine has, or a fresh clone gets a pair that cannot load together.
+PyQt6>=6.6,<6.12
+PyQt6-Qt6>=6.6,<6.12
+PyQt6-WebEngine>=6.6,<6.12
 sounddevice>=0.4,<1
 numpy>=1.24,<3
 google-genai>=2.8.0,<3

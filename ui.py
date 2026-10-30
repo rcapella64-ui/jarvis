@@ -48,6 +48,13 @@ except Exception as _e:            # noqa: BLE001 - reported, never fatal
     QAudioOutput = QMediaPlayer = QGraphicsVideoItem = None
     HAVE_VIDEO = False
     print(f"[Video] playback unavailable ({_e}) — the HUD will not show video.")
+# The Three.js waveform. QtWebEngine has to be imported before the QApplication
+# exists; if it is missing, the HUD simply paints its reactor core instead.
+try:
+    from core.waveform_view import WaveformView
+except Exception as _e:            # noqa: BLE001 - reported, never fatal
+    WaveformView = None
+    print(f"[Waveform] unavailable ({_e}) — the HUD will use the painted core.")
 
 from PyQt6.QtWidgets import (
     QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
@@ -473,9 +480,53 @@ class HudCanvas(QWidget):
 
         self._intro = None        # IntroAnimation em curso (core/intro.py) ou None
 
+        # The Three.js waveform: a child view over the band above the status
+        # line, built the first time that style is shown (it starts a browser
+        # process, which nobody on the head or the core should pay for).
+        self._wave = None
+        self._wave_colors = None
+        self.set_style(self.hud_style)
+
         self._tmr = QTimer(self)
         self._tmr.timeout.connect(self._step)
         self._tmr.start(16)
+
+    # ── Three.js waveform (core/waveform_view.py) ─────────────────────────
+    def set_style(self, style: str) -> None:
+        """Switch the centrepiece: "waveform", "face" or "core"."""
+        self.hud_style = style
+        if style == "waveform" and self._wave is None and WaveformView is not None:
+            try:
+                self._wave = WaveformView(C.BG, self)
+                self._wave.on_failed = self.update
+                self._layout_wave()
+            except Exception as e:
+                print(f"[Waveform] could not start: {e}")
+                self._wave = None
+        if self._wave is not None:
+            self._wave.setVisible(self._wave_active())
+        self.update()
+
+    def _wave_active(self) -> bool:
+        return (self.hud_style == "waveform" and self._wave is not None
+                and not self._wave.failed)
+
+    def _layout_wave(self) -> None:
+        # Everything above the status line; paintEvent keeps that line and below.
+        if self._wave is not None:
+            W, H = self.width(), self.height()
+            self._wave.setGeometry(0, 0, W, max(1, int(H / 2 + min(W, H) * 0.40) - 4))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._layout_wave()
+
+    def _push_wave(self) -> None:
+        colors = (C.BG, C.PRI, C.ACC, C.ACC2, C.GREEN, C.MUTED_C)
+        if colors != self._wave_colors:     # the UI colour can change at runtime
+            self._wave_colors = colors
+            self._wave.set_theme(dict(zip(("bg", "pri", "acc", "acc2", "green", "muted"), colors)))
+        self._wave.push(self._amp_disp, self.state, self.speaking, self.muted)
 
     # ── intro de abertura (core/intro.py) ─────────────────────────────────
     def start_intro(self) -> None:
@@ -625,6 +676,8 @@ class HudCanvas(QWidget):
         self._live_amp *= 0.86
         self._amp_disp += (self._live_amp - self._amp_disp) * 0.45
         amp = self._amp_disp
+        if self._wave_active():
+            self._push_wave()
 
         # The avatar animates off the very same smoothed level the waveform
         # uses — one audio source, so the mouth can never drift out of sync.
@@ -934,10 +987,14 @@ class HudCanvas(QWidget):
                 self._intro = None
             self._avatar.paint(p, cx, _head_cy, _r_head, _main, _acc, qcol(C.BG))
 
-        # reactor core — the other centrepiece, and the fallback if the head
-        # could not be built. There is no third path: the old face.png branch
-        # was unreachable (no such file ships) and the bare orb it fell through
-        # to is what this replaces.
+        # The Three.js waveform draws itself in its child view above this band.
+        elif self._wave_active():
+            pass
+
+        # reactor core — the other centrepiece, and the fallback if the head or
+        # the waveform could not be built. There is no other path: the old
+        # face.png branch was unreachable (no such file ships) and the bare orb
+        # it fell through to is what this replaces.
         else:
             _band_t = 12.0
             _band_h = max(60.0, _sy_status - 12.0 - _band_t)
@@ -966,6 +1023,12 @@ class HudCanvas(QWidget):
         p.setPen(QPen(col, 1))
         p.setFont(QFont("Courier New", 11, QFont.Weight.Bold))
         p.drawText(QRectF(0, sy, W, 26), Qt.AlignmentFlag.AlignCenter, txt)
+
+        # The strip of bars below is the same waveform in miniature: redundant
+        # right under the Three.js one.
+        if self._wave_active():
+            p.end()
+            return
 
         # waveform — reacts to the real audio level (mic while listening,
         # JARVIS's own voice while speaking). Falls back to a gentle idle
@@ -5978,23 +6041,29 @@ class MainWindow(QMainWindow):
 
     def _refresh_hud_btn(self):
         from memory.config_manager import get_hud_style
-        face = get_hud_style() == "face"
-        # Neither state is "off", so both read as active — this is a choice
-        # between two things, not a switch with a disabled side.
+        label, tip = self._HUD_LABELS[get_hud_style()]
+        # None of the states is "off", so all read as active — this is a choice
+        # between looks, not a switch with a disabled side.
         style = f"""
             QPushButton {{ background: {C.PANEL2}; color: {C.PRI};
                 border: 1px solid {C.BORDER_A}; border-radius: 3px;
                 text-align: left; padding: 0 8px; }}
             QPushButton:hover {{ color: {C.WHITE}; border: 1px solid {C.BORDER_B}; }}"""
-        self._hud_btn.setText("🧑  HUD: ANIMATED FACE" if face
-                              else "◉  HUD: REACTOR CORE")
+        self._hud_btn.setText(label)
         self._hud_btn.setStyleSheet(style)
-        self._hud_btn.setToolTip(
-            "An animated head that speaks your words and shows what JARVIS is "
-            "doing. Tap to switch to the reactor core."
-            if face else
-            "A reactor core that turns with the state and moves with your voice. "
-            "Tap to switch to the animated head.")
+        self._hud_btn.setToolTip(tip)
+
+    _HUD_LABELS = {
+        "waveform": ("〰  HUD: 3D WAVEFORM",
+                     "A 3D wave (Three.js) moved by the real audio: your voice while "
+                     "listening, JARVIS's while speaking. Tap for the animated head."),
+        "face":     ("🧑  HUD: ANIMATED FACE",
+                     "An animated head that speaks your words and shows what JARVIS "
+                     "is doing. Tap for the reactor core."),
+        "core":     ("◉  HUD: REACTOR CORE",
+                     "A reactor core that turns with the state and moves with your "
+                     "voice. Tap for the 3D waveform."),
+    }
 
     _AVATAR_LABELS = {
         "plexus": ("✦  AVATAR: PLEXUS NODES",
@@ -6035,7 +6104,7 @@ class MainWindow(QMainWindow):
         if get_hud_style() != "face":
             save_hud_style("face")
             try:
-                self.hud.hud_style = "face"
+                self.hud.set_style("face")
             except Exception:
                 pass
             self._refresh_hud_btn()
@@ -6050,20 +6119,19 @@ class MainWindow(QMainWindow):
         self._log.append_log(f"SYS: Avatar switched to {want}.")
 
     def _toggle_hud_style(self):
-        """Swap the centrepiece. Both objects stay in memory, so the change is
+        """Cycle the centrepiece. The objects stay in memory, so the change is
         instant and switching back costs nothing."""
-        from memory.config_manager import get_hud_style, save_hud_style
-        want = "core" if get_hud_style() == "face" else "face"
+        from memory.config_manager import HUD_STYLES, get_hud_style, save_hud_style
+        want = HUD_STYLES[(HUD_STYLES.index(get_hud_style()) + 1) % len(HUD_STYLES)]
         save_hud_style(want)
         try:
-            self.hud.hud_style = want
-            self.hud.update()
+            self.hud.set_style(want)
         except Exception:
             pass
         self._refresh_hud_btn()
-        self._log.append_log(
-            "SYS: HUD switched to the animated face." if want == "face"
-            else "SYS: HUD switched to the reactor core.")
+        names = {"waveform": "the 3D waveform", "face": "the animated face",
+                 "core": "the reactor core"}
+        self._log.append_log(f"SYS: HUD switched to {names[want]}.")
 
     def _refresh_stt_btn(self):
         if not hasattr(self, "_stt_btn"):
