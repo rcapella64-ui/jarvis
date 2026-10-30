@@ -262,7 +262,7 @@ class HoloDeck(QWidget):
 
         # title
         cy = y + pad
-        p.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        p.setFont(QFont("Bahnschrift", 8, QFont.Weight.Bold))
         p.setPen(self._pri_dim)
         p.drawText(QRectF(x + pad, cy, w - 2 * pad, 16),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, "◈ " + title)
@@ -277,7 +277,7 @@ class HoloDeck(QWidget):
             shown = target * count_t if fmt in ("money", "int", "pct") else target
             txt = fmt_value(shown, fmt) if fmt != "text" else str(value)
             col = {"ok": self._ok, "warn": self._warn}.get(card.get("accent"), self._pri)
-            f = QFont("Courier New", 24, QFont.Weight.Bold)
+            f = QFont("Bahnschrift", 24, QFont.Weight.Bold)
             p.setFont(f)
             halo = QColor(col)
             halo.setAlpha(70)
@@ -289,7 +289,7 @@ class HoloDeck(QWidget):
             p.drawText(r, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, txt)
             if unit:
                 tw = p.fontMetrics().horizontalAdvance(txt)
-                p.setFont(QFont("Courier New", 9))
+                p.setFont(QFont("Bahnschrift", 9))
                 p.setPen(self._text_dim)
                 p.drawText(QRectF(x + pad + tw + 10, cy + 6, w - 2 * pad - tw - 10, 40),
                            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, unit)
@@ -298,7 +298,7 @@ class HoloDeck(QWidget):
             cy += 6
 
         # detail lines, revealed one by one during the count-up
-        p.setFont(QFont("Courier New", 9))
+        p.setFont(QFont("Bahnschrift", 9))
         n_show = len(lines) if self._phase != "hold" else max(1, int(math.ceil(len(lines) * min(1.0, dt / 0.9))))
         for i, line in enumerate(lines[:n_show]):
             p.setPen(self._text if i == 0 or not line.startswith("  ") else self._text_dim)

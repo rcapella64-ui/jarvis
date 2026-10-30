@@ -121,11 +121,18 @@ autorizou.
   ("high demand"). Espere um pouco ou troque o modelo em ⚙ → PLUGIN SETTINGS →
   BRAIN (por exemplo, `gemini-3.5-flash-lite`).
 
-## Visual: Waveform 3D
+## Visual
+
+A interface é um painel escuro em azul neon, com cantos chanfrados e tipografia técnica.
+Tudo o que aparece nele é real: relógio, CPU, memória, rede, GPU, uso das APIs, log e o
+estado do assistente. Nenhum número é decorativo. O botão no canto da barra de ícones
+esconde os painéis e deixa só a onda (modo cinema); ▦ os traz de volta.
+
+### Waveform 3D
 
 O centro da tela é uma onda 3D feita em [Three.js](https://threejs.org) (`core/waveform3d/`),
 movida pelo áudio real: a sua voz quando ele ouve, a dele quando fala. Ela muda de cor
-com o estado (ouvindo, falando, pensando, mudo). Roda na placa de vídeo, dentro de um
+com o estado (ouvindo, falando, pensando, mudo), sempre no tom de azul do tema. Roda na placa de vídeo, dentro de um
 QtWebEngine (`core/waveform_view.py`). O botão ⚙ → **HUD** alterna entre a onda, o rosto
 animado e o reator. Sem WebGL ou sem o QtWebEngine, o JARVIS usa o reator sozinho.
 
