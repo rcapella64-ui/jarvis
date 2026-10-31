@@ -3469,7 +3469,12 @@ class PluginSettingsOverlay(QWidget):
 
     def _save_ns(self, ns: str):
         from memory.config_manager import save_plugin_config
-        save_plugin_config(ns, self._gather(ns))
+        # An empty password box never erases a stored key: this form can be
+        # older than the key (opened before it was saved, or in another window),
+        # and saving would wipe it without anyone having touched that field.
+        values = {k: v for k, v in self._gather(ns).items()
+                  if v or self._types.get((ns, k)) != "password"}
+        save_plugin_config(ns, values)
 
     def _save_all(self):
         for sec in self._sections:
