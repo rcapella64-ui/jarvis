@@ -7,9 +7,8 @@
   "plugin_config": {
     "groq":       { "api_key": "", "model": "whisper-large-v3-turbo", "language": "pt" },
     "gemini":     { "secondary_key": "", "tertiary_key": "" },
-    "brain":      { "provider": "", "api_key": "", "model": "", "base_url": "", "tts_voice": "", "tts_engine": "", "fish_api_key": "", "fish_voice_id": "", "fish_model": "" },
+    "brain":      { "provider": "gemini", "api_key": "", "model": "", "base_url": "" },
     "trello":     { "api_key": "", "token": "", "default_board": "" },
-    "cakto":      { "client_id": "", "client_secret": "", "amounts": {} },
     "rastracking": { "api_key": "" }
   }
 }

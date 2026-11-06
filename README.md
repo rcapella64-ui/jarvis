@@ -162,7 +162,6 @@ tocar em toda abertura, use `"intro_always": true`; para nunca tocar,
 |---|---|
 | `bom_dia.py` | Briefing matinal por voz |
 | `brain_economy.py` | Tela ⚙ → BRAIN: quem pensa as respostas (Gemini, DeepSeek, Groq…) |
-| `cakto_sales.py` | Vendas e pedidos da Cakto por voz |
 | `focus_mode.py` | Modo foco |
 | `gemini_accounts.py` | Rodízio de chaves Gemini (secundária e terciária) |
 | `groq_listen.py` | Transcrição de voz pela Groq (Whisper) |
