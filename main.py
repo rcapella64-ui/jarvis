@@ -375,6 +375,30 @@ def _msg_len(m: dict) -> int:
 # space (so "380.789,00" and "3,5" are never split).
 _FIRST_CLAUSE = re.compile(r"^(.+?[,;:])\s+(.+)$", re.S)
 
+VOICE_PART_MAX = 110       # characters the local voice is asked to say at once
+
+
+def _voice_parts(text: str, limit: int = VOICE_PART_MAX) -> list[str]:
+    """Split a long sentence for the voice: at , ; : (followed by a space, so
+    numbers stay whole), joining short clauses back up to `limit`; a clause still
+    too long is cut between words."""
+    text = text.strip()
+    if len(text) <= limit:
+        return [text] if text else []
+    clauses = re.split(r"(?<=[,;:])\s+", text)
+    out: list[str] = []
+    for clause in clauses:
+        while len(clause) > limit:
+            cut = clause.rfind(" ", 0, limit)
+            cut = cut if cut > limit // 2 else limit
+            out.append(clause[:cut].strip())
+            clause = clause[cut:].strip()
+        if out and len(out[-1]) + 1 + len(clause) <= limit:
+            out[-1] = f"{out[-1]} {clause}"
+        elif clause:
+            out.append(clause)
+    return out
+
 
 def _trim_history(history: list, keep: int = 24) -> None:
     """Keep roughly the last `keep` messages, cutting only at a user turn so a
@@ -1200,6 +1224,9 @@ class JarvisLive:
                         m = _FIRST_CLAUSE.match(sentence)
                         if m and len(m.group(1)) >= 12 and len(m.group(2)) >= 12:
                             pieces = [m.group(1), m.group(2)]
+                    # A long sentence takes the voice tens of seconds, enough to
+                    # run past its timeout on a busy machine: voice it in parts.
+                    pieces = [part for piece in pieces for part in _voice_parts(piece)]
                     voiced = False
                     for piece in pieces:
                         if self._interrupted:
@@ -3696,7 +3723,33 @@ class JarvisLive:
             print(f"[JARVIS] Reconnecting in {delay}s...")
             await asyncio.sleep(delay)
 
+def _already_running() -> bool:
+    """One JARVIS at a time. Two copies fight over the microphone, the GPU and
+    the memory, and then neither hears nor speaks — and the window takes a while
+    to appear, which is exactly when a shortcut gets clicked again."""
+    if sys.platform == "win32":
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        # Held for the life of the process; Windows frees it when we exit.
+        main._mutex = k32.CreateMutexW(None, False, "Local\\JARVIS-opensource")
+        return k32.GetLastError() == 183            # ERROR_ALREADY_EXISTS
+    import socket
+    main._lock = socket.socket()
+    try:
+        main._lock.bind(("127.0.0.1", 47819))
+        return False
+    except OSError:
+        return True
+
+
 def main():
+    if _already_running():
+        msg = "JARVIS is already open."
+        print(msg)
+        if sys.platform == "win32":
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(None, "O JARVIS já está aberto.", "JARVIS", 0x40)
+        return
     ui = JarvisUI("face.png")
 
     def runner():

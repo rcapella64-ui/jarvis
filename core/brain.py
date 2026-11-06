@@ -269,7 +269,8 @@ def tts_local_pcm24k(text: str) -> bytes:
 
     if not local_tts_up() and not ensure_local_tts():
         raise RuntimeError("Local voice server did not start (see voz_local/servidor_voz.log)")
-    r = requests.post(f"{LOCAL_TTS_URL}/tts", json={"text": text}, timeout=TIMEOUT)
+    # Generous: on a machine short of memory one part can take a minute or more.
+    r = requests.post(f"{LOCAL_TTS_URL}/tts", json={"text": text}, timeout=180)
     r.raise_for_status()
     if not r.content:
         return b""

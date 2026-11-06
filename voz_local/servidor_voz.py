@@ -42,17 +42,45 @@ model = None
 lock = threading.Lock()
 
 
+def _trim_memory() -> None:
+    """Hand back to Windows the memory that only loading needed (file buffers,
+    CPU copies of the weights now on the video card). Pages still in use come
+    back on their own; the rest stops occupying the user's RAM."""
+    import gc
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    if sys.platform == "win32":
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        k32.GetCurrentProcess.restype = ctypes.c_void_p
+        ctypes.windll.psapi.EmptyWorkingSet(ctypes.c_void_p(k32.GetCurrentProcess()))
+
+
 def load() -> None:
     global model
     from chatterbox.mtl_tts import ChatterboxMultilingualTTS
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    if device == "cpu":
+        # Leave cores for the JARVIS window, the microphone and the rest of the PC.
+        torch.set_num_threads(max(2, (os.cpu_count() or 4) // 2))
     log.info("carregando Chatterbox Multilingual em %s…", device)
-    m = ChatterboxMultilingualTTS.from_pretrained(device=device)
+    from huggingface_hub import constants as hf_constants
+    try:
+        # The model is already on disk (setup downloads it): skip asking the
+        # internet about it on every start — it is faster and works offline.
+        hf_constants.HF_HUB_OFFLINE = True
+        m = ChatterboxMultilingualTTS.from_pretrained(device=device)
+    except Exception:
+        log.info("modelo não está todo no disco — baixando")
+        hf_constants.HF_HUB_OFFLINE = False
+        m = ChatterboxMultilingualTTS.from_pretrained(device=device)
     if not REF.exists():
         raise SystemExit(f"falta o áudio de referência: {REF}")
     m.prepare_conditionals(str(REF), exaggeration=EXAGERO)
     model = m
+    _trim_memory()
     log.info("pronto (referência %s)", REF.name)
 
 
@@ -116,12 +144,26 @@ def download_only() -> None:
                       token=os.getenv("HF_TOKEN"))
 
 
+class _Server(ThreadingHTTPServer):
+    # The stock server sets SO_REUSEADDR, and on Windows that lets a second
+    # server bind the same port: two copies then load the model at once and
+    # starve the machine. Claim the port exclusively, so the second one exits.
+    allow_reuse_address = False
+    allow_reuse_port = False
+
+    def server_bind(self):
+        import socket
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
 def main() -> None:
     if "--baixar" in sys.argv:
         download_only()
         return
     try:
-        server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+        server = _Server(("127.0.0.1", PORT), Handler)
     except OSError:
         log.info("porta %d já em uso — outro servidor de voz já está rodando", PORT)
         sys.exit(0)
